@@ -1,0 +1,367 @@
+---
+title: "Analyzing the QS World University Rankings 2025"
+author: "Nadica Jordanova"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Introduction / Presentation and description of the problem
+
+University rankings are a highly discussed topic in higher education. Students use them to decide where to apply, employers use them to evaluate graduates, and governments use them to allocate funding. One of the most famous and comprehensive annual ranking lists is the **QS World University Rankings**.
+
+For this project, I wanted to analyze the global landscape of higher education using the **QS World University Rankings 2025** dataset. My goal is to understand what factors make a university successful and respected on the global stage.
+
+To guide my analysis, I formulated three main research questions:
+
+1.  **Question 1 (Size & Geography)**: Does the size of a university (S, M, L, XL based on enrollment) and the region it is located in have an impact on its academic reputation, employer reputation, and research citation scores?
+2.  **Question 2 (National Capacity)**: Which countries have the largest presence in the rankings, and do these countries also achieve the highest average scores?
+3.  **Question 3 (National Funding Policy)**: Is there a relationship between a country's public investment in research (R&D spending as a percentage of GDP) and the global standing and density of its universities?
+
+To answer these questions, I will employ a tidyverse-first pipeline in R using native pipes (`|>`) and functions like `group_by`, `summarise`, `mutate`, `filter`, and `inner_join`. I will also perform a relational join with a secondary dataset I compiled, `country_metadata.csv`, which contains key national statistics (population, GDP, and R&D spending) from the World Bank and UNESCO databases.
+
+------------------------------------------------------------------------
+
+# Presentation of the data
+
+First, let's load the packages needed for this analysis. I will use `tidyverse` for data manipulation and visualization, `janitor` to clean column names, and `knitr` for clean table outputs.
+
+```{r}
+# Loading standard packages
+library(tidyverse)
+library(janitor)
+library(knitr)
+library(scales)
+```
+
+## Loading the Datasets
+
+I load the primary ranking dataset and the country stats dataset, immediately pipe them through `clean_names()` to ensure consistent lowercase column names.
+
+```{r}
+# Loading the primary ranking data and secondary country data
+qs <- read_csv("qs_rankings.csv") |> 
+  clean_names()
+
+country_info <- read_csv("country_metadata.csv") |> 
+  clean_names()
+```
+
+## Explaining the Columns and Data Types
+
+Let's inspect the first 5 rows of our primary rankings dataset to understand its structure:
+
+```{r}
+# Display the head of the main rankings dataset
+qs |> 
+  select(rank_2025, institution_name, location, region, size, status, academic_reputation_score, citations_per_faculty_score) |> 
+  head(5) |> 
+  kable(caption = "First 5 Universities in the QS 2025 Dataset")
+```
+
+Below is a breakdown of the key variables in the rankings dataset:
+
+- `rank_2025` (Character): The official global rank of the university (ranges from `1` to `1501+`). It is a character type because lower-ranked universities are grouped in ranges (e.g., `601-650`).
+- `institution_name` (Character): The official name of the university.
+- `location` (Character): The country or territory.
+- `region` (Character): Broad geographical region (Americas, Asia, Europe, Africa, Oceania).
+- `size` (Character): University size category based on student numbers (S, M, L, XL).
+- `status` (Character): Institutional model (A = Public, B = Private).
+- `academic_reputation_score` (Numeric): A score from 0 to 100 based on a global survey of academics.
+- `employer_reputation_score` (Numeric): A score from 0 to 100 based on a global survey of employers.
+- `citations_per_faculty_score` (Numeric): A score from 0 to 100 measuring research paper citations relative to faculty size.
+- `sustainability_score` (Numeric): A score from 0 to 100 based on environmental and social impact.
+
+Now, let's look at the country metadata dataset:
+
+```{r}
+# Display the head of the country stats dataset
+country_info |> 
+  head(5) |> 
+  kable(caption = "First 5 Rows of the Country Metadata Dataset")
+```
+
+The columns in our country metadata are:
+
+- `location` (Character): The country name (which matches the rankings exactly).
+- `population_m` (Numeric): National population in millions.
+- `gdp_billions_usd` (Numeric): Nominal GDP in billions of US dollars.
+- `gerd_pct_gdp` (Numeric): Gross expenditure on research and development as a percentage of GDP.
+
+------------------------------------------------------------------------
+
+# Transformation of data
+
+To address my research questions, I performed three distinct data transformations using tidyverse pipes (`|>`).
+
+## Transformation 1: Performance by Region and Institutional Size
+
+In this first table, I group the universities by `region` and `size` to see how enrollment scale affects academic reputation, employer reputation, and citations. I filter out missing values and round the metrics.
+
+```{r}
+# Table 1: Grouping by region and size
+region_size_table <- qs |> 
+  filter(!is.na(region), region != "Not Classified", !is.na(size)) |> 
+  group_by(region, size) |> 
+  summarise(
+    university_count = n(),
+    avg_academic_rep = mean(academic_reputation_score, na.rm = TRUE),
+    avg_employer_rep = mean(employer_reputation_score, na.rm = TRUE),
+    avg_citations = mean(citations_per_faculty_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  # Rounding values for a clean table presentation
+  mutate(
+    avg_academic_rep = round(avg_academic_rep, 1),
+    avg_employer_rep = round(avg_employer_rep, 1),
+    avg_citations = round(avg_citations, 1)
+  ) |> 
+  arrange(region, desc(university_count))
+
+# Print the table
+region_size_table |> 
+  kable(caption = "Table 1: Performance Scores Summarized by Region and Student Size")
+```
+
+### Explanation of Table 1
+
+Table 1 shows a strong connection between university size and reputation. Across almost all regions (especially the Americas, Asia, and Europe), larger universities (`XL` and `L`) consistently achieve significantly higher average Academic and Employer Reputation scores than smaller universities (`M` and `S`). Interestingly, research citation scores do not show this strict size pattern, indicating that smaller, specialized institutions can still produce highly-cited research.
+
+## Transformation 2: National Capacity and Academic Leadership
+
+For my second table, I group the universities by `location` (country) to see which countries have the largest presence in the rankings. I calculate the total number of universities, their highest rank (by parsing the character ranks), and their average academic and sustainability scores. I filter for countries with 10 or more universities to focus on major educational systems.
+
+```{r}
+# Table 2: Aggregating university performance by country
+country_capacity_table <- qs |> 
+  mutate(numeric_rank = parse_number(rank_2025)) |> 
+  group_by(location) |> 
+  summarise(
+    total_universities = n(),
+    best_rank = min(numeric_rank, na.rm = TRUE),
+    avg_academic_score = mean(academic_reputation_score, na.rm = TRUE),
+    avg_sustainability = mean(sustainability_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  filter(total_universities >= 10) |> 
+  mutate(
+    avg_academic_score = round(avg_academic_score, 1),
+    avg_sustainability = round(avg_sustainability, 1)
+  ) |> 
+  arrange(desc(total_universities))
+
+# Displaying top 15 rows
+country_capacity_table |> 
+  head(15) |> 
+  kable(caption = "Table 2: Top Countries by University Count (Countries with 10+ Universities)")
+```
+
+### Explanation of Table 2
+
+Table 2 displays the distribution of academic capacity. The United States has the highest number of ranked universities (197), followed by the United Kingdom (90) and China (71). However, when we look at the average quality, countries with smaller systems like Australia (average academic score of 48.7) or South Korea (average academic score of 29.5) have extremely high average scores, indicating strong quality control across their systems.
+
+## Transformation 3: Joining University Outcomes with National R&D Spending
+
+In my third transformation, I perform an `inner_join` between my summarized university data and the country statistics database. I then calculate two new policy-relevant metrics: \* **Universities per Million People**: The number of ranked universities divided by the country's population. \* **Academic Score to R&D Spending Ratio**: Average academic reputation score divided by the country's R&D spending % of GDP.
+
+```{r}
+# Table 3: Relational join and policy ratios
+joined_policy_table <- qs |> 
+  group_by(location) |> 
+  summarise(
+    num_universities = n(),
+    avg_academic = mean(academic_reputation_score, na.rm = TRUE),
+    avg_citations = mean(citations_per_faculty_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  # Perform the inner join
+  inner_join(country_info, by = "location") |> 
+  # Compute advanced metrics
+  mutate(
+    universities_per_million = num_universities / population_m,
+    academic_to_rd_ratio = avg_academic / gerd_pct_gdp
+  ) |> 
+  # Round values for display
+  mutate(
+    avg_academic = round(avg_academic, 1),
+    avg_citations = round(avg_citations, 1),
+    universities_per_million = round(universities_per_million, 3),
+    academic_to_rd_ratio = round(academic_to_rd_ratio, 1)
+  ) |> 
+  arrange(desc(gerd_pct_gdp))
+
+# Displaying the joined table
+joined_policy_table |> 
+  kable(caption = "Table 3: University Success Joined with National R&D Statistics")
+```
+
+### Explanation of Table 3
+
+Table 3 provides key insights into national education policy. Countries that spend heavily on research and development (such as South Korea at 4.9% of GDP and Switzerland at 3.4%) possess high-performing university systems. Furthermore, we can see that smaller countries like Switzerland (1.0) and Australia (1.46) have a very high density of world-class universities per million people.
+
+------------------------------------------------------------------------
+
+# Exploratory data analysis
+
+To visualize these findings, I created four distinct, high-quality `ggplot` visualizations.
+
+## Plot 1: Boxplot of Academic Reputation by Region
+
+I constructed a boxplot to examine the spread of Academic Reputation Scores across the major geographic regions, overlaying a subtle grey jitter to show the density of individual universities.
+
+```{r}
+#| label: plot-1
+
+qs |> 
+  filter(!is.na(region), region != "Not Classified") |> 
+  ggplot(aes(x = region, y = academic_reputation_score, fill = region)) +
+  geom_jitter(width = 0.2, alpha = 0.15, color = "darkgrey") +
+  geom_boxplot(alpha = 0.8, outlier.shape = NA, color = "#2c3e50") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 13, color = "#2c3e50"),
+    axis.title = element_text(face = "bold", size = 10, color = "#2c3e50")
+  ) +
+  labs(
+    title = "Distribution of Academic Reputation Scores by Region",
+    x = "Geographical Region",
+    y = "Academic Reputation Score (0 - 100)"
+  )
+```
+
+### Explanation of Plot 1
+
+Plot 1 demonstrates that Academic Reputation is heavily right-skewed. The vast majority of universities cluster below a reputation score of 30, regardless of the region they are in. However, Europe and the Americas possess a long trail of high-scoring elite outliers stretching to 100, while Africa exhibits the most compressed distribution.
+
+## Plot 2: Citations vs. Academic Reputation (Faceted by Region)
+
+This scatter plot maps research citations (X-axis) against academic reputation (Y-axis), colored by institutional governance status (Public vs. Private) and faceted by geographic region.
+
+```{r}
+#| label: plot-2
+#| fig-width: 10
+#| fig-height: 6
+
+qs |> 
+  filter(status %in% c("A", "B"), !is.na(region), region != "Not Classified") |> 
+  mutate(status = recode(status, "A" = "Public", "B" = "Private")) |> 
+  ggplot(aes(x = citations_per_faculty_score, y = academic_reputation_score, color = status)) +
+  geom_point(alpha = 0.5, size = 1.5) +
+  geom_smooth(method = "lm", formula = y ~ x, color = "#e74c3c", se = FALSE, size = 0.8) +
+  facet_wrap(~region) +
+  scale_color_manual(values = c("Public" = "#2980b9", "Private" = "#27ae60")) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 13, color = "#2c3e50"),
+    strip.text = element_text(face = "bold", size = 10, color = "white"),
+    strip.background = element_rect(fill = "#2c3e50")
+  ) +
+  labs(
+    title = "Citations per Faculty vs. Academic Reputation",
+    x = "Citations per Faculty Score",
+    y = "Academic Reputation Score",
+    color = "Institutional Model"
+  )
+```
+
+### Explanation of Plot 2
+
+Plot 2 reveals a positive correlation between citation scores and academic reputation in all regions: universities with stronger research citations tend to have a higher academic reputation. Additionally, public universities (blue points) dominate the landscape in Europe, Oceania, and Africa, whereas private universities (green points) are highly competitive in the Americas and Asia.
+
+## Plot 3: Top 20 Countries by Number of Universities and Sustainability
+
+This horizontal bar chart displays the top 20 countries by university count. The bars are colored dynamically based on the country's average university Sustainability Score, using a green-to-blue gradient.
+
+```{r}
+#| label: plot-3
+
+top_countries <- qs |> 
+  group_by(location) |> 
+  summarise(
+    count = n(),
+    avg_sustainability = mean(sustainability_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  arrange(desc(count)) |> 
+  head(20)
+
+ggplot(top_countries, aes(x = reorder(location, count), y = count, fill = avg_sustainability)) +
+  geom_col(width = 0.75) +
+  coord_flip() +
+  scale_fill_gradient(low = "#85e3b3", high = "#1b4d3e", name = "Avg Sustainability") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 13, color = "#2c3e50"),
+    axis.title = element_text(face = "bold", size = 10, color = "#2c3e50"),
+    axis.text.y = element_text(face = "bold", size = 9, color = "#2c3e50")
+  ) +
+  labs(
+    title = "Top 20 Countries by Number of Ranked Universities",
+    x = "Country / Territory",
+    y = "Number of Ranked Universities"
+  )
+```
+
+### Explanation of Plot 3
+
+Plot 3 shows that while the US and UK lead in university volume, countries like Australia, the UK, and Canada have a darker green shading on their bars. This indicates that their universities achieve, on average, higher sustainability scores compared to other major countries, reflecting a strong national commitment to environmental initiatives.
+
+## Plot 4: National R&D Spending vs. Average Academic Reputation
+
+This scatter plot combines my relational join data, plotting country R&D spending % of GDP against average university academic reputation score, with a linear regression line and shaded confidence interval.
+
+```{r}
+#| label: plot-4
+
+ggplot(joined_policy_table, aes(x = gerd_pct_gdp, y = avg_academic)) +
+  geom_smooth(method = "lm", formula = y ~ x, color = "tomato", fill = "lightgray", alpha = 0.5) +
+  geom_point(size = 3.5, color = "steelblue", alpha = 0.8) +
+  geom_text(aes(label = location), vjust = -1.2, size = 3, fontface = "bold", color = "#2c3e50", check_overlap = TRUE) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 13, color = "#2c3e50"),
+    axis.title = element_text(face = "bold", size = 10, color = "#2c3e50")
+  ) +
+  labs(
+    title = "Country R&D spending vs. Average University Score",
+    x = "National R&D Expenditure (GERD % of GDP)",
+    y = "Average Academic Reputation Score"
+  )
+```
+
+### Explanation of Plot 4
+
+Plot 4 proves that a country's public investment in research is strongly related to university success. The positive trend line illustrates that countries investing a higher percentage of their GDP in R&D (like South Korea, Switzerland, and Taiwan) have universities with much stronger global reputations. In contrast, countries with low R&D spending struggle to project global academic influence.
+
+------------------------------------------------------------------------
+
+# Interpretation / Conclusion
+
+In this university project, I analyzed the QS World University Rankings 2025 dataset and joined it with country development statistics. Here are my main conclusions:
+
+1.  **The Scale Factor (Question 1)**: Size plays a big role in reputation. Large and extra-large universities leverage their massive student and faculty populations to achieve significantly higher academic and employer reputation scores globally. However, smaller specialized centers can still match them in research citation intensity.
+2.  **National Capacity (Question 2)**: The US and UK dominate global university volume. However, smaller university ecosystems, like Australia's, maintain exceptionally high average reputation scores across their entire systems.
+3.  **Funding Policy (Question 3)**: National investment in research is the primary structural driver of academic prestige. The relational join and Plot 4 demonstrate a strong, clear correlation: countries that fund science heavily (over 2% of GDP) consistently establish high-performing universities on the global stage.
+
+------------------------------------------------------------------------
+
+# References
+
+1.  **QS World University Rankings 2025 Dataset**: Downloaded from [Kaggle Datasets](https://www.kaggle.com/datasets) (originally published by [QS Top Universities](https://www.topuniversities.com/)).
+2.  **UNESCO Institute for Statistics (UIS)**: National research and development spending (GERD) indicators (2024).
+3.  **World Bank Open Data**: Country population and nominal GDP estimates (2024).
+4.  **Tidyverse R Framework**: Hadley Wickham et al., (2019). Welcome to the tidyverse. *Journal of Open Source Software*, 4(43), 1686. <https://doi.org/10.21105/joss.01686>.
