@@ -1,2 +1,2 @@
-Website URL: https://nadica-qs-rankings-25.netlify.app
+Website URL: https://nadica-quarto-project.netlify.app
 
