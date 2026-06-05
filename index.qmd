@@ -50,7 +50,7 @@ library(scales)
 I load the primary ranking dataset and the country stats dataset, immediately pipe them through `clean_names()` to ensure consistent lowercase column names.
 
 ```{r}
-# Loading the primary ranking data and secondary country data
+
 qs <- read_csv("qs_rankings.csv") |> 
   clean_names()
 
@@ -63,7 +63,7 @@ country_info <- read_csv("country_metadata.csv") |>
 Let's inspect the first 5 rows of our primary rankings dataset to understand its structure:
 
 ```{r}
-# Display the head of the main rankings dataset
+
 qs |> 
   select(rank_2025, institution_name, location, region, size, status, academic_reputation_score, citations_per_faculty_score) |> 
   head(5) |> 
@@ -86,7 +86,7 @@ Below is a breakdown of the key variables in the rankings dataset:
 Now, let's look at the country metadata dataset:
 
 ```{r}
-# Display the head of the country stats dataset
+
 country_info |> 
   head(5) |> 
   kable(caption = "First 5 Rows of the Country Metadata Dataset")
@@ -121,7 +121,7 @@ region_size_table <- qs |>
     avg_citations = mean(citations_per_faculty_score, na.rm = TRUE),
     .groups = "drop"
   ) |> 
-  # Rounding values for a clean table presentation
+
   mutate(
     avg_academic_rep = round(avg_academic_rep, 1),
     avg_employer_rep = round(avg_employer_rep, 1),
@@ -129,7 +129,6 @@ region_size_table <- qs |>
   ) |> 
   arrange(region, desc(university_count))
 
-# Print the table
 region_size_table |> 
   kable(caption = "Table 1: Performance Scores Summarized by Region and Student Size")
 ```
@@ -161,7 +160,7 @@ country_capacity_table <- qs |>
   ) |> 
   arrange(desc(total_universities))
 
-# Displaying top 15 rows
+
 country_capacity_table |> 
   head(15) |> 
   kable(caption = "Table 2: Top Countries by University Count (Countries with 10+ Universities)")
@@ -185,14 +184,14 @@ joined_policy_table <- qs |>
     avg_citations = mean(citations_per_faculty_score, na.rm = TRUE),
     .groups = "drop"
   ) |> 
-  # Perform the inner join
+  
   inner_join(country_info, by = "location") |> 
-  # Compute advanced metrics
+
   mutate(
     universities_per_million = num_universities / population_m,
     academic_to_rd_ratio = avg_academic / gerd_pct_gdp
   ) |> 
-  # Round values for display
+ 
   mutate(
     avg_academic = round(avg_academic, 1),
     avg_citations = round(avg_citations, 1),
@@ -201,7 +200,7 @@ joined_policy_table <- qs |>
   ) |> 
   arrange(desc(gerd_pct_gdp))
 
-# Displaying the joined table
+
 joined_policy_table |> 
   kable(caption = "Table 3: University Success Joined with National R&D Statistics")
 ```
